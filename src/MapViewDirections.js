@@ -44,6 +44,16 @@ class MapViewDirections extends Component {
 		}, cb);
 	}
 
+	getInstructions(a) {
+		let output = [];
+		a.forEach(b => {
+			b.steps.forEach(c => {
+				output.push(c.html_instructions);
+			})
+		});
+		return output;
+	}
+
 	decode(t, e) {
 		for (var n, o, u = 0, l = 0, r = 0, d = [], h = 0, i = 0, a = null, c = Math.pow(10, e || 5); u < t.length;) {
 			a = null, h = 0, i = 0;
@@ -126,7 +136,7 @@ class MapViewDirections extends Component {
 		// Define the URL to call. Only add default parameters to the URL if it's a string.
 		let url = directionsServiceBaseUrl;
 		if (typeof (directionsServiceBaseUrl) === 'string') {
-			url += `?origin=${origin}&waypoints=${waypoints}&destination=${destination}&key=${apikey}&mode=${mode.toLowerCase()}&language=${language}&region=${region}&departure_time=now`;
+			url += `?origin=${origin}&waypoints=${waypoints}&destination=${destination}&key=${apikey}&mode=${mode.toLowerCase()}&language=${language}&region=${region}`;
 		}
 
 		return fetch(url)
@@ -147,10 +157,11 @@ class MapViewDirections extends Component {
 							return carry + curr.distance.value;
 						}, 0) / 1000,
 						duration: route.legs.reduce((carry, curr) => {
-							return carry + curr.duration_in_traffic ? curr.duration_in_traffic.value:curr.duration.value;
+							return carry + curr.duration.value;
 						}, 0) / 60,
 						coordinates: this.decode(route.overview_polyline.points),
 						fare: route.fare,
+						instructions: this.getInstructions(route.legs)
 					});
 
 				} else {
