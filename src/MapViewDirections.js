@@ -14,6 +14,7 @@ class MapViewDirections extends Component {
 			coordinates: null,
 			distance: null,
 			duration: null,
+			instructions: null,
 		};
 	}
 
@@ -38,6 +39,7 @@ class MapViewDirections extends Component {
 			coordinates: null,
 			distance: null,
 			duration: null,
+			instructions: null,
 		}, cb);
 	}
 
@@ -194,7 +196,7 @@ class MapViewDirections extends Component {
 			);
 		})).then(results => {
 			// Combine all Directions API Request results into one
-			const result = results.reduce((acc, { distance, duration, coordinates, fare, waypointOrder }) => {
+			const result = results.reduce((acc, { distance, duration, coordinates, fare, instructions, waypointOrder }) => {
 				acc.coordinates = [
 					...acc.coordinates,
 					...coordinates,
@@ -205,6 +207,7 @@ class MapViewDirections extends Component {
 					...acc.fares,
 					fare,
 				];
+				acc.instructions = instructions,
 				acc.waypointOrder = [
 					...acc.waypointOrder,
 					waypointOrder,
@@ -216,6 +219,7 @@ class MapViewDirections extends Component {
 				distance: 0,
 				duration: 0,
 				fares: [],
+				instructions: [],
 				waypointOrder: [],
 			});
 
