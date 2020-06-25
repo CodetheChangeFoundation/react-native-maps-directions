@@ -3,6 +3,8 @@ import PropTypes from 'prop-types';
 import MapView from 'react-native-maps';
 import isEqual from 'lodash.isequal';
 
+const WAYPOINT_LIMIT = 10;
+
 class MapViewDirections extends Component {
 
 	constructor(props) {
@@ -16,28 +18,23 @@ class MapViewDirections extends Component {
 	}
 
 	componentDidMount() {
-		this._mounted = true;
 		this.fetchAndRenderRoute(this.props);
 	}
 
-	componentWillUnmount() {
-		this._mounted = false;
-	}
-
-	componentWillReceiveProps(nextProps) {
-		if (!isEqual(nextProps.origin, this.props.origin) || !isEqual(nextProps.destination, this.props.destination) || !isEqual(nextProps.waypoints, this.props.waypoints) || !isEqual(nextProps.mode, this.props.mode)) {
-			if (nextProps.resetOnChange === false) {
-				this.fetchAndRenderRoute(nextProps);
+	componentDidUpdate(prevProps) {
+		if (!isEqual(prevProps.origin, this.props.origin) || !isEqual(prevProps.destination, this.props.destination) || !isEqual(prevProps.waypoints, this.props.waypoints) || !isEqual(prevProps.mode, this.props.mode) || !isEqual(prevProps.precision, this.props.precision) || !isEqual(prevProps.splitWaypoints, this.props.splitWaypoints)) {
+			if (this.props.resetOnChange === false) {
+				this.fetchAndRenderRoute(this.props);
 			} else {
 				this.resetState(() => {
-					this.fetchAndRenderRoute(nextProps);
+					this.fetchAndRenderRoute(this.props);
 				});
 			}
 		}
 	}
 
 	resetState = (cb = null) => {
-		this._mounted && this.setState({
+		this.setState({
 			coordinates: null,
 			distance: null,
 			duration: null,
@@ -54,29 +51,44 @@ class MapViewDirections extends Component {
 		return output;
 	}
 
-	decode(t, e) {
-		for (var n, o, u = 0, l = 0, r = 0, d = [], h = 0, i = 0, a = null, c = Math.pow(10, e || 5); u < t.length;) {
-			a = null, h = 0, i = 0;
-			do a = t.charCodeAt(u++) - 63, i |= (31 & a) << h, h += 5; while (a >= 32);
-			n = 1 & i ? ~(i >> 1) : i >> 1, h = i = 0;
-			do a = t.charCodeAt(u++) - 63, i |= (31 & a) << h, h += 5; while (a >= 32);
-			o = 1 & i ? ~(i >> 1) : i >> 1, l += n, r += o, d.push([l / c, r / c]);
-		}
+	decode(t) {
+		let points = [];
+		for (let step of t) {
+			let encoded = step.polyline.points;
+			let index = 0, len = encoded.length;
+			let lat = 0, lng = 0;
+			while (index < len) {
+				let b, shift = 0, result = 0;
+				do {
+					b = encoded.charAt(index++).charCodeAt(0) - 63;
+					result |= (b & 0x1f) << shift;
+					shift += 5;
+				} while (b >= 0x20);
 
-		return d = d.map(function(t) {
-			return {
-				latitude: t[0],
-				longitude: t[1],
-			};
-		});
+				let dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+				lat += dlat;
+				shift = 0;
+				result = 0;
+				do {
+					b = encoded.charAt(index++).charCodeAt(0) - 63;
+					result |= (b & 0x1f) << shift;
+					shift += 5;
+				} while (b >= 0x20);
+				let dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+				lng += dlng;
+
+				points.push({ latitude: (lat / 1E5), longitude: (lng / 1E5) });
+			}
+		}
+		return points;
 	}
 
 	fetchAndRenderRoute = (props) => {
 
 		let {
-			origin,
-			destination,
-			waypoints,
+			origin: initialOrigin,
+			destination: initialDestination,
+			waypoints: initialWaypoints = [],
 			apikey,
 			onStart,
 			onReady,
@@ -84,46 +96,138 @@ class MapViewDirections extends Component {
 			mode = 'DRIVING',
 			language = 'en',
 			optimizeWaypoints,
+			splitWaypoints,
 			directionsServiceBaseUrl = 'https://maps.googleapis.com/maps/api/directions/json',
 			region,
+			precision = 'low',
+			timePrecision = 'none',
+			channel,
 		} = props;
 
-		if (!origin || !destination) {
+		if (!apikey) {
+			console.warn(`MapViewDirections Error: Missing API Key`); // eslint-disable-line no-console
 			return;
 		}
 
-		if (origin.latitude && origin.longitude) {
-			origin = `${origin.latitude},${origin.longitude}`;
+		if (!initialOrigin || !initialDestination) {
+			return;
 		}
 
-		if (destination.latitude && destination.longitude) {
-			destination = `${destination.latitude},${destination.longitude}`;
+		const timePrecisionString = timePrecision==='none' ? '' : timePrecision;
+		
+		// Routes array which we'll be filling.
+		// We'll perform a Directions API Request for reach route
+		const routes = [];
+
+		// We need to split the waypoints in chunks, in order to not exceede the max waypoint limit
+		// ~> Chunk up the waypoints, yielding multiple routes
+		if (splitWaypoints && initialWaypoints && initialWaypoints.length > WAYPOINT_LIMIT) {
+			// Split up waypoints in chunks with chunksize WAYPOINT_LIMIT
+			const chunckedWaypoints = initialWaypoints.reduce((accumulator, waypoint, index) => {
+				const numChunk = Math.floor(index / WAYPOINT_LIMIT); 
+				accumulator[numChunk] = [].concat((accumulator[numChunk] || []), waypoint); 
+				return accumulator;
+			}, []);
+
+			// Create routes for each chunk, using:
+			// - Endpoints of previous chunks as startpoints for the route (except for the first chunk, which uses initialOrigin)
+			// - Startpoints of next chunks as endpoints for the route (except for the last chunk, which uses initialDestination)
+			for (let i = 0; i < chunckedWaypoints.length; i++) {
+				routes.push({
+					waypoints: chunckedWaypoints[i],
+					origin: (i === 0) ? initialOrigin : chunckedWaypoints[i-1][chunckedWaypoints[i-1].length - 1],
+					destination: (i === chunckedWaypoints.length - 1) ? initialDestination : chunckedWaypoints[i+1][0],
+				});
+			}
+		}
+		
+		// No splitting of the waypoints is requested/needed.
+		// ~> Use one single route
+		else {
+			routes.push({
+				waypoints: initialWaypoints,
+				origin: initialOrigin,
+				destination: initialDestination,
+			});
 		}
 
-		if (!waypoints || !waypoints.length) {
-			waypoints = '';
-		} else {
+		// Perform a Directions API Request for each route
+		Promise.all(routes.map((route, index) => {
+			let {
+				origin,
+				destination,
+				waypoints,
+			} = route;
+
+			if (origin.latitude && origin.longitude) {
+				origin = `${origin.latitude},${origin.longitude}`;
+			}
+
+			if (destination.latitude && destination.longitude) {
+				destination = `${destination.latitude},${destination.longitude}`;
+			}
+
 			waypoints = waypoints
 				.map(waypoint => (waypoint.latitude && waypoint.longitude) ? `${waypoint.latitude},${waypoint.longitude}` : waypoint)
 				.join('|');
-		}
 
-		if (optimizeWaypoints) {
-			waypoints = `optimize:true|${waypoints}`;
-		}
+			if (optimizeWaypoints) {
+				waypoints = `optimize:true|${waypoints}`;
+			}
 
-		onStart && onStart({
-			origin,
-			destination,
-			waypoints: waypoints ? waypoints.split('|') : [],
-		});
+			if (index === 0) {
+				onStart && onStart({
+					origin,
+					destination,
+					waypoints: initialWaypoints,
+				});
+			}
 
-		this.fetchRoute(directionsServiceBaseUrl, origin, waypoints, destination, apikey, mode, language, region)
-			.then(result => {
-				if (!this._mounted) return;
-				this.setState(result);
-				onReady && onReady(result);
-			})
+			return (
+				this.fetchRoute(directionsServiceBaseUrl, origin, waypoints, destination, apikey, mode, language, region, precision, timePrecisionString, channel)
+					.then(result => {
+						return result;
+					})
+					.catch(errorMessage => {
+						return Promise.reject(errorMessage);
+					})
+			);
+		})).then(results => {
+			// Combine all Directions API Request results into one
+			const result = results.reduce((acc, { distance, duration, coordinates, fare, waypointOrder }) => {
+				acc.coordinates = [
+					...acc.coordinates,
+					...coordinates,
+				];
+				acc.distance += distance;
+				acc.duration += duration;
+				acc.fares = [
+					...acc.fares,
+					fare,
+				];
+				acc.waypointOrder = [
+					...acc.waypointOrder,
+					waypointOrder,
+				];
+
+				return acc;
+			}, {
+				coordinates: [],
+				distance: 0,
+				duration: 0,
+				fares: [],
+				waypointOrder: [],
+			});
+
+			// Plot it out and call the onReady callback
+			this.setState({
+				coordinates: result.coordinates,
+			}, function() {
+				if (onReady) {
+					onReady(result);
+				}
+			});
+		})
 			.catch(errorMessage => {
 				this.resetState();
 				console.warn(`MapViewDirections Error: ${errorMessage}`); // eslint-disable-line no-console
@@ -131,12 +235,18 @@ class MapViewDirections extends Component {
 			});
 	}
 
-	fetchRoute(directionsServiceBaseUrl, origin, waypoints, destination, apikey, mode, language, region) {
+	fetchRoute(directionsServiceBaseUrl, origin, waypoints, destination, apikey, mode, language, region, precision, timePrecision, channel) {
 
 		// Define the URL to call. Only add default parameters to the URL if it's a string.
 		let url = directionsServiceBaseUrl;
 		if (typeof (directionsServiceBaseUrl) === 'string') {
-			url += `?origin=${origin}&waypoints=${waypoints}&destination=${destination}&key=${apikey}&mode=${mode.toLowerCase()}&language=${language}&region=${region}&departure_time=now`;
+			url += `?origin=${origin}&waypoints=${waypoints}&destination=${destination}&key=${apikey}&mode=${mode.toLowerCase()}&language=${language}&region=${region}`;
+			if(timePrecision){
+				url+=`&departure_time=${timePrecision}`;
+			}
+			if(channel){
+				url+=`&channel=${channel}`;
+			}
 		}
 
 		return fetch(url)
@@ -144,7 +254,7 @@ class MapViewDirections extends Component {
 			.then(json => {
 
 				if (json.status !== 'OK') {
-					const errorMessage = json.error_message || 'Unknown error';
+					const errorMessage = json.error_message || json.status || 'Unknown error';
 					return Promise.reject(errorMessage);
 				}
 
@@ -157,11 +267,21 @@ class MapViewDirections extends Component {
 							return carry + curr.distance.value;
 						}, 0) / 1000,
 						duration: route.legs.reduce((carry, curr) => {
-							return carry + curr.duration_in_traffic ? curr.duration_in_traffic.value:curr.duration.value;
+							return carry + (curr.duration_in_traffic ? curr.duration_in_traffic.value : curr.duration.value);
 						}, 0) / 60,
-						coordinates: this.decode(route.overview_polyline.points),
+						coordinates: (
+							(precision === 'low') ?
+								this.decode([{polyline: route.overview_polyline}]) :
+								route.legs.reduce((carry, curr) => {
+									return [
+										...carry,
+										...this.decode(curr.steps),
+									];
+								}, [])
+						),
 						fare: route.fare,
-						instructions: this.getInstructions(route.legs)
+						instructions: this.getInstructions(route.legs),
+						waypointOrder: route.waypoint_order,
 					});
 
 				} else {
@@ -169,33 +289,34 @@ class MapViewDirections extends Component {
 				}
 			})
 			.catch(err => {
-				console.warn(
-          'react-native-maps-directions Error on GMAPS route request',
-          err
-        );
+				return Promise.reject(`Error on GMAPS route request: ${err}`);
 			});
 	}
 
 	render() {
-		if (!this.state.coordinates) {
+		const { coordinates } = this.state;
+
+		if (!coordinates) {
 			return null;
 		}
 
 		const {
 			origin, // eslint-disable-line no-unused-vars
 			waypoints, // eslint-disable-line no-unused-vars
+			splitWaypoints, // eslint-disable-line no-unused-vars
 			destination, // eslint-disable-line no-unused-vars
 			apikey, // eslint-disable-line no-unused-vars
 			onReady, // eslint-disable-line no-unused-vars
 			onError, // eslint-disable-line no-unused-vars
 			mode, // eslint-disable-line no-unused-vars
 			language, // eslint-disable-line no-unused-vars
-			region,
+			region, // eslint-disable-line no-unused-vars
+			precision,  // eslint-disable-line no-unused-vars
 			...props
 		} = this.props;
 
 		return (
-			<MapView.Polyline coordinates={this.state.coordinates} {...props} />
+			<MapView.Polyline coordinates={coordinates} {...props} />
 		);
 	}
 
@@ -233,8 +354,12 @@ MapViewDirections.propTypes = {
 	language: PropTypes.string,
 	resetOnChange: PropTypes.bool,
 	optimizeWaypoints: PropTypes.bool,
+	splitWaypoints: PropTypes.bool,
 	directionsServiceBaseUrl: PropTypes.string,
 	region: PropTypes.string,
+	precision: PropTypes.oneOf(['high', 'low']),
+	timePrecision: PropTypes.oneOf(['now', 'none']),
+	channel: PropTypes.string,
 };
 
 export default MapViewDirections;

@@ -1,8 +1,48 @@
 # `react-native-maps-directions` Changelog
 
-## 1.7.0 - 2018-08-14
+## vNext – ????-??-??
+
+- …
+
+## 1.8.0 - 2020-04-14
+
+- Add `waypointOrder` in `onReady` callback (#139)
+
+## 1.7.6 - 2020-03-17
+
+- Improve error handling in case a request to the Google Maps Directions API fails (#132)
+- Improve error handling when no `apikey` prop is given
+
+## 1.7.5 - 2020-03-17
+
+- Fix “Cannot set property 'map' of undefined” error (#130 #131 #132)
+
+## 1.7.4 - 2020-03-14
+
+- Add `channel` and `timePrecision` props to reduce the cost of Google maps (#129, thanks @rohitbansa)
+
+## 1.7.3 - 2019-10-02
+
+- Add `precision` prop to allow one to choose between the ”Steps Polyline” and “Overview Polyline”
+
+## 1.7.2 - 2019-10-02
+
+- Fix bug where duration was wrongfully calculated when using waypoints
+- Fix bug where not all legs of a route were drawn
+
+## 1.7.1 - 2019-10-02
+
+- Fall back to standard duration in case “duration with traffic” is not given
+- Use “Steps polyline”, instead of “Overview polyline” (regression fix)
+- Update dependencies
+
+## 1.7.0 - 2019-05-17
 
 - Add `optimizeWaypoints` prop to allow use of waypoints optimization.
+- Add `region` prop.
+- Return “Duration with traffic” as `duration`
+- Return `fare` in `onReady`
+
 
 ## 1.6.0 - 2018-03-09
 
